@@ -29,6 +29,8 @@ import android.text.Html
 import android.util.Xml
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
+import android.text.InputType
 import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -379,6 +381,7 @@ class RadarService : Service() {
         @Volatile var lastCheck = 0L
         @Volatile var goldPx = 0.0
         @Volatile var wtiPx = 0.0
+        @Volatile var marketText = ""
 
         fun addLog(s: String) {
             log.add(0, s)
@@ -453,6 +456,11 @@ class RadarService : Service() {
         ex.scheduleWithFixedDelay({ safe { Sources.calendar()?.let { calendar = it } } }, 0, 30 * 60, TimeUnit.SECONDS)
         ex.scheduleWithFixedDelay({ safe { checkCalendar() } }, 10, 15, TimeUnit.SECONDS)
         ex.scheduleWithFixedDelay({ safe { updateFg() } }, 5, 20, TimeUnit.SECONDS)
+
+        val w = Watcher(prefs) { t, txt, sp -> alert(t, txt, null, true, sp) }
+        ex.scheduleWithFixedDelay({ safe { w.pollBooks() } }, 3, 5 * 60, TimeUnit.SECONDS)
+        ex.scheduleWithFixedDelay({ safe { w.pollCot() } }, 6, 6 * 3600, TimeUnit.SECONDS)
+        ex.scheduleWithFixedDelay({ safe { w.pollLiquidity() } }, 12, 60, TimeUnit.SECONDS)
 
         addLog("[${hms(System.currentTimeMillis())}] ▶ Radar bda — ${Sources.feeds.size} sources")
         return START_STICKY
@@ -599,6 +607,7 @@ class MainActivity : Activity() {
 
     private lateinit var status: TextView
     private lateinit var logView: TextView
+    private lateinit var marketView: TextView
     private val h = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
         override fun run() { refresh(); h.postDelayed(this, 2000) }
@@ -665,13 +674,45 @@ class MainActivity : Activity() {
             setOnClickListener { askBattery() }
         })
 
+        val tokenRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val tokenIn = EditText(this).apply {
+            hint = "OANDA API token (demo)"
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(prefs.getString("oanda", ""))
+        }
+        tokenRow.addView(tokenIn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        tokenRow.addView(Button(this).apply {
+            text = "SAVE"
+            setOnClickListener {
+                prefs.edit().putString("oanda", tokenIn.text.toString().trim()).apply()
+                Market.lastOandaError = ""
+                text = "✓"
+            }
+        })
+        root.addView(tokenRow)
+
+        marketView = TextView(this).apply {
+            textSize = 12.5f
+            setTextColor(Color.parseColor("#F5C542"))
+            setTextIsSelectable(true)
+            setPadding(0, (8 * dp).toInt(), 0, (12 * dp).toInt())
+        }
         logView = TextView(this).apply {
             textSize = 13f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.parseColor("#E6EDF3"))
             setTextIsSelectable(true)
         }
-        root.addView(ScrollView(this).apply { addView(logView) },
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(marketView)
+            addView(logView)
+        }
+        root.addView(ScrollView(this).apply { addView(inner) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         setContentView(root)
@@ -705,6 +746,7 @@ class MainActivity : Activity() {
                 RadarService.goldPx, RadarService.wtiPx
             )
         } else "🔴 Wa9ef — dghot START"
+        marketView.text = RadarService.marketText.ifBlank { "Market map kaytcharja (~1 min)..." }
         logView.text = if (RadarService.log.isEmpty()) "Mazal ta alert..." else RadarService.log.joinToString("\n\n")
     }
 
